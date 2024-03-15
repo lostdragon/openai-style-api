@@ -1,8 +1,11 @@
-version: "1"
+version: "3.3"
 services:
   openai-key:
     build: .
+    image: openai-style-api
     command: python open-api.py
+    container_name: openai-style-api
+    restart: always
     ports:
       - "8090:8090"
     environment:
