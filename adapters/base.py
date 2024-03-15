@@ -1,6 +1,6 @@
 import time
 from typing import Union, Iterator
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse
 from utils.util import num_tokens_from_string
 
 
@@ -10,7 +10,7 @@ class ModelAdapter:
 
     def chat_completions(
         self, request: ChatCompletionRequest
-    ) -> Iterator[ChatCompletionResponse]:
+    ) -> Iterator[ChatCompletionResponse | ErrorResponse]:
         """
         返回一个迭代器对象
          stream为false   第一个就是结果

@@ -2,7 +2,7 @@ import json
 from typing import Iterator
 import requests
 from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse
 from loguru import logger
 from utils.util import num_tokens_from_string
 import time
@@ -26,6 +26,7 @@ role_map = {
     "user": "Human",
     "assistant": "Assistant",
 }
+
 
 # 参考  https://github.com/jtsang4/claude-to-chatgpt
 
@@ -81,8 +82,11 @@ class ClaudeModel(ModelAdapter):
                     yield ChatCompletionResponse(**openai_response)
         else:
             response = post(url, headers, claude_params)
-            openai_response = self.claude_to_chatgpt_response(response)
-            yield ChatCompletionResponse(**openai_response)
+            if response.status_code == 200:
+                openai_response = self.claude_to_chatgpt_response(response)
+                yield ChatCompletionResponse(**openai_response)
+            else:
+                yield ErrorResponse(status_code=response.status_code, **response.json())
 
     def convert_messages_to_prompt(self, messages):
         prompt = ""

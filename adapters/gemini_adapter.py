@@ -3,7 +3,7 @@ import time
 from typing import Dict, Iterator, List
 import uuid
 from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ChatMessage
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ErrorResponse
 import requests
 from utils.http_util import post, stream
 from loguru import logger
@@ -84,6 +84,18 @@ from utils.util import num_tokens_from_string
 }
 """
 
+error_code_map = {
+    400: 'InvalidRequestError',
+    401: 'AuthenticationError',
+    403: 'PermissionError',
+    404: 'InvalidRequestError',
+    409: 'TryAgain',
+    415: 'InvalidRequestError',
+    429: 'RateLimit',
+    500: 'InternalServerError',
+    503: 'Unavailable',
+}
+
 
 class GeminiAdapter(ModelAdapter):
     def __init__(self, **kwargs):
@@ -97,23 +109,29 @@ class GeminiAdapter(ModelAdapter):
         self.config_args = kwargs
 
     def chat_completions(
-        self, request: ChatCompletionRequest
-    ) -> Iterator[ChatCompletionResponse]:
+            self, request: ChatCompletionRequest
+    ) -> Iterator[ChatCompletionResponse | ErrorResponse]:
         method = "generateContent"
         headers = {"Content-Type": "application/json"}
         # if request.stream:
         #     method = "streamGenerateContent"
         url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:{method}?key="
-            + self.api_key
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:{method}?key="
+                + self.api_key
         )
         params = self.convert_2_gemini_param(request)
         response = post(url, headers=headers, proxies=self.proxies, params=params)
-        if request.stream:  # 假的stream
-            openai_response = self.response_convert_stream(response)
+
+        if response.status_code != 200:
+            openai_response = self.error_convert(response.json())
+            yield ErrorResponse(status_code=response.status_code, **openai_response)
         else:
-            openai_response = self.response_convert(response)
-        yield ChatCompletionResponse(**openai_response)
+            if request.stream:  # 假的stream
+                openai_response = self.response_convert_stream(response.json())
+                yield ChatCompletionResponse(**openai_response)
+            else:
+                openai_response = self.response_convert(response.json())
+                yield ChatCompletionResponse(**openai_response)
 
     def response_convert_stream(self, data):
         completion = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -181,8 +199,27 @@ class GeminiAdapter(ModelAdapter):
       ]
     """
 
+    def error_convert(self, data):
+        # {
+        #     "error": {
+        #         "code": 503,
+        #         "message": "The model is overloaded. Please try again later.",
+        #         "status": "UNAVAILABLE"
+        #     }
+        # }
+        code = error_code_map.get(data['error']['code'], error_code_map[500])
+
+        openai_response = {
+            'error': {
+                'code': code,
+                'message': data['error']['message'],
+            }
+        }
+
+        return openai_response
+
     def convert_messages_to_prompt(
-        self, messages: List[ChatMessage]
+            self, messages: List[ChatMessage]
     ) -> List[Dict[str, str]]:
         prompt = []
         for message in messages:

@@ -1,8 +1,6 @@
-
-
 from typing import Dict, Iterator, List
 from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ChatMessage
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ErrorResponse
 import time
 
 import cachetools.func
@@ -78,9 +76,12 @@ class ZhiPuApiModel(ModelAdapter):
         else:
             global headers
             headers.update({"Authorization": token})
-            data = post(url, headers, params)
-            logger.debug(f"chat_completions data: {data}")
-            yield ChatCompletionResponse(**self.convert_response(data, model))
+            response = post(url, headers, params)
+            logger.debug(f"chat_completions data: {response.json()}")
+            if response.status_code == 200:
+                yield ChatCompletionResponse(**self.convert_response(response.json(), model))
+            else:
+                yield ErrorResponse(status_code=response.status_code, **response.json())
 
     def convert_response(self, resp, model):
         resp = resp["data"]

@@ -1,9 +1,7 @@
-
-
 import json
 from typing import Iterator, Union
 from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse
 import requests
 from loguru import logger
 from utils.http_util import post, stream
@@ -38,18 +36,25 @@ class AzureAdapter(ModelAdapter):
         req_args = self.convert_param(request)
         if request.stream:
             response = stream(url, self.headers, req_args)
-            for chunk in response.iter_lines(chunk_size=1024):
-                # 移除头部data: 字符
-                decoded_line = chunk.decode('utf-8')
-                logger.info(f"decoded_line: {decoded_line}")
-                decoded_line = decoded_line.lstrip("data:").strip()
-                if "[DONE]" == decoded_line:
-                    break
-                if decoded_line:
-                    yield ChatCompletionResponse(**json.loads(decoded_line))
+            if response.status_code == 200:
+                for chunk in response.iter_lines(chunk_size=1024):
+                    # 移除头部data: 字符
+                    decoded_line = chunk.decode('utf-8')
+                    logger.info(f"decoded_line: {decoded_line}")
+                    decoded_line = decoded_line.lstrip("data:").strip()
+                    if "[DONE]" == decoded_line:
+                        break
+                    if decoded_line:
+                        yield ChatCompletionResponse(**json.loads(decoded_line))
+            else:
+                resp = ErrorResponse(status_code=response.status_code, **response.json())
+                yield resp
         else:
             response = post(url, self.headers, req_args)
-            resp = ChatCompletionResponse(**response)
+            if response.status_code == 200:
+                resp = ChatCompletionResponse(**response.json())
+            else:
+                resp = ErrorResponse(status_code=response.status_code, **response.json())
             yield resp
 
     def convert_param(self, request: ChatCompletionRequest):

@@ -6,7 +6,7 @@ api_timeout_seconds = 300
 
 
 def post(
-    api_url, headers: dict, params: dict, timeout=api_timeout_seconds, proxies=None
+        api_url, headers: dict, params: dict, timeout=api_timeout_seconds, proxies=None
 ):
     resp = None
     try:
@@ -17,10 +17,7 @@ def post(
             timeout=timeout,
             proxies=proxies,
         )
-        if requests.codes.ok != resp.status_code:
-            logger.error(f"响应异常：{resp_text(resp)}")
-            raise Exception("响应异常：" + resp_text(resp))
-        return json.loads(resp.text)
+        return resp
     except Exception as e:
         logger.exception("请求异常", e)
         raise e
@@ -31,14 +28,12 @@ def post(
 
 
 def resp_text(resp):
-    resp_str = None
-    if resp:
-        resp_str = f"status_code:{resp.status_code}: {resp.text}"
+    resp_str = f"status_code:{resp.status_code}: {resp.text}"
     return resp_str
 
 
 def stream(
-    api_url, headers: dict, params: dict, timeout=api_timeout_seconds, proxies=None
+        api_url, headers: dict, params: dict, timeout=api_timeout_seconds, proxies=None
 ):
     resp = None
     try:
@@ -51,9 +46,6 @@ def stream(
             timeout=timeout,
             proxies=proxies,
         )
-        if requests.codes.ok != resp.status_code:
-            logger.error(f"响应异常：{resp.text}")
-            raise Exception("请求异常")
         return resp
     except Exception as e:
         logger.exception("请求异常", e)

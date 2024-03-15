@@ -67,3 +67,13 @@ class ChatCompletionResponse(BaseModel):
     ]
     created: Optional[int] = Field(default_factory=lambda: int(time.time()))
     usage: Optional[Usage] = None
+
+
+class Error(BaseModel):
+    code: str
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    status_code: int | None
+    error: Error

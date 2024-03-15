@@ -1,7 +1,7 @@
 import json
 from typing import Iterator
 from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse
 from loguru import logger
 from utils.http_util import stream, post
 
@@ -30,18 +30,25 @@ class ProxyAdapter(ModelAdapter):
         logger.info(f"ProxyAdapter url: {url}, data: {req_args}")
         if request.stream:
             response = stream(url, header, req_args)
-            for chunk in response.iter_lines(chunk_size=1024):
-                # 移除头部data: 字符
-                decoded_line = chunk.decode('utf-8')
-                logger.info(f"decoded_line: {decoded_line}")
-                decoded_line = decoded_line.lstrip("data:").strip()
-                if "[DONE]" == decoded_line:
-                    break
-                if decoded_line:
-                    yield ChatCompletionResponse(**json.loads(decoded_line))
+            if response.status_code == 200:
+                for chunk in response.iter_lines(chunk_size=1024):
+                    # 移除头部data: 字符
+                    decoded_line = chunk.decode('utf-8')
+                    logger.info(f"decoded_line: {decoded_line}")
+                    decoded_line = decoded_line.lstrip("data:").strip()
+                    if "[DONE]" == decoded_line:
+                        break
+                    if decoded_line:
+                        yield ChatCompletionResponse(**json.loads(decoded_line))
+            else:
+                resp = ErrorResponse(status_code=response.status_code, **response.json())
+                yield resp
         else:
             response = post(url, header, req_args)
-            resp = ChatCompletionResponse(**response)
+            if response.status_code == 200:
+                resp = ChatCompletionResponse(**response.json())
+            else:
+                resp = ErrorResponse(status_code=response.status_code, **response.json())
             yield resp
 
     def convert_param(self, request: ChatCompletionRequest):

@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.routing import APIRouter
 from pydantic import BaseModel
 from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse
 from typing import Iterator, List, Optional
 from adapters.adapter_factory import get_adapter
 from loguru import logger
@@ -38,9 +38,9 @@ def create_app():
 
 
 def check_api_key(
-    auth: Optional[HTTPAuthorizationCredentials] = Depends(
-        HTTPBearer(auto_error=False)
-    ),
+        auth: Optional[HTTPAuthorizationCredentials] = Depends(
+            HTTPBearer(auto_error=False)
+        ),
 ):
     logger.info(f"auth: {auth}")
     if auth and auth.credentials:
@@ -63,9 +63,9 @@ def check_api_key(
 
 
 def check_admin_token(
-    auth: Optional[HTTPAuthorizationCredentials] = Depends(
-        HTTPBearer(auto_error=False)
-    ),
+        auth: Optional[HTTPAuthorizationCredentials] = Depends(
+            HTTPBearer(auto_error=False)
+        ),
 ):
     logger.info(f"auth: {auth}")
     if auth and auth.credentials:
@@ -100,7 +100,7 @@ def get_adapter_by_token(token: str):
 
 @router.post("/v1/chat/completions")
 def create_chat_completion(
-    request: ChatCompletionRequest, model: ModelAdapter = Depends(check_api_key)
+        request: ChatCompletionRequest, model: ModelAdapter = Depends(check_api_key)
 ):
     logger.info(f"request: {request},  model: {model}")
     resp = model.chat_completions(request)
@@ -108,7 +108,13 @@ def create_chat_completion(
         return StreamingResponse(convert(resp), media_type="text/event-stream")
     else:
         openai_response = next(resp)
-        return JSONResponse(content=openai_response.model_dump(exclude_none=True))
+        if isinstance(openai_response, ErrorResponse):
+            status_code = openai_response.status_code
+            openai_response.status_code = None
+        else:
+            status_code = 200
+
+        return JSONResponse(content=openai_response.model_dump(exclude_none=True), status_code=status_code)
 
 
 @router.get("/verify")
