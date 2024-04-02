@@ -133,9 +133,26 @@ class GeminiAdapter(ModelAdapter):
                 openai_response = self.response_convert(response.json())
                 yield ChatCompletionResponse(**openai_response)
 
-    def response_convert_stream(self, data):
-        completion = data["candidates"][0]["content"]["parts"][0]["text"]
-        completion_tokens = num_tokens_from_string(completion)
+    @staticmethod
+    def parse_response(data: dict) -> tuple:
+        finish_reason = 'stop'
+        completion_tokens = 0
+        completion = ''
+
+        if 'blockReason' in data['promptFeedback']:
+            finish_reason = 'content_filter'
+
+        elif data["candidates"][0]['finishReason'] == 'SAFETY':
+            finish_reason = 'content_filter'
+
+        elif data["candidates"][0]['finishReason'] == 'STOP':
+            completion = data["candidates"][0]["content"]["parts"][0]["text"]
+            completion_tokens = num_tokens_from_string(completion)
+
+        return finish_reason, completion_tokens, completion
+
+    def response_convert_stream(self, data: dict) -> dict:
+        finish_reason, completion_tokens, completion = self.parse_response(data)
         openai_response = {
             "id": str(uuid.uuid1()),
             "object": "chat.completion.chunk",
@@ -153,15 +170,14 @@ class GeminiAdapter(ModelAdapter):
                         "content": completion,
                     },
                     "index": 0,
-                    "finish_reason": "stop",
+                    "finish_reason": finish_reason,
                 }
             ],
         }
         return openai_response
 
-    def response_convert(self, data):
-        completion = data["candidates"][0]["content"]["parts"][0]["text"]
-        completion_tokens = num_tokens_from_string(completion)
+    def response_convert(self, data: dict) -> dict:
+        finish_reason, completion_tokens, completion = self.parse_response(data)
         openai_response = {
             "id": str(uuid.uuid1()),
             "object": "chat.completion",
@@ -179,7 +195,7 @@ class GeminiAdapter(ModelAdapter):
                         "content": completion,
                     },
                     "index": 0,
-                    "finish_reason": "stop",
+                    "finish_reason": finish_reason,
                 }
             ],
         }
@@ -199,6 +215,15 @@ class GeminiAdapter(ModelAdapter):
       ]
     """
 
+    @staticmethod
+    def error_response(code: str, message: str) -> dict:
+        return {
+            'error': {
+                'code': code,
+                'message': message,
+            }
+        }
+
     def error_convert(self, data):
         # {
         #     "error": {
@@ -209,14 +234,7 @@ class GeminiAdapter(ModelAdapter):
         # }
         code = error_code_map.get(data['error']['code'], error_code_map[500])
 
-        openai_response = {
-            'error': {
-                'code': code,
-                'message': data['error']['message'],
-            }
-        }
-
-        return openai_response
+        return self.error_response(code, data['error']['message'])
 
     def convert_messages_to_prompt(
             self, messages: List[ChatMessage]
