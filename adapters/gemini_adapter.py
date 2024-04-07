@@ -258,5 +258,32 @@ class GeminiAdapter(ModelAdapter):
 
     def convert_2_gemini_param(self, request: ChatCompletionRequest):
         contents = self.convert_messages_to_prompt(request.messages)
-        param = {"contents": contents}
+        param = {
+            "contents": contents,
+            # "generationConfig": {
+            #     "temperature": request.temperature if request.temperature else 0.9,  # 0-1之间
+            #     "topK": 1,
+            #     "topP": request.top_p if request.top_p else 1,  # 0-1之间
+            #     "maxOutputTokens": request.max_length if request.max_length else 2048,
+            #     "stopSequences": request.stop if request.stop else [],
+            # },
+            "safetySettings": [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_NONE"
+                }
+            ]
+        }
         return param
