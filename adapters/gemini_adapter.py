@@ -135,19 +135,19 @@ class GeminiAdapter(ModelAdapter):
 
     @staticmethod
     def parse_response(data: dict) -> tuple:
-        finish_reason = 'stop'
         completion_tokens = 0
         completion = ''
-
-        if 'blockReason' in data['promptFeedback']:
+        if 'blockReason' in data['promptFeedback']:  # 可选 SAFETY, OTHER
             finish_reason = 'content_filter'
-
-        elif data["candidates"][0]['finishReason'] == 'SAFETY':
-            finish_reason = 'content_filter'
-
         elif data["candidates"][0]['finishReason'] == 'STOP':
             completion = data["candidates"][0]["content"]["parts"][0]["text"]
             completion_tokens = num_tokens_from_string(completion)
+            finish_reason = 'stop'
+        elif data["candidates"][0]['finishReason'] == 'MAX_TOKENS':
+            finish_reason = 'length'
+        else:
+            # SAFETY, RECITATION, OTHER
+            finish_reason = 'content_filter'
 
         return finish_reason, completion_tokens, completion
 
