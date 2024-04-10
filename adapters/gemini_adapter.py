@@ -115,8 +115,13 @@ class GeminiAdapter(ModelAdapter):
         headers = {"Content-Type": "application/json"}
         # if request.stream:
         #     method = "streamGenerateContent"
+
+        model = request.model
+        if model not in ['gemini-pro', 'gemini-1.5-pro-latest']:
+            model = 'gemini-pro'
+
         url = (
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:{method}?key="
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:{method}?key="
                 + self.api_key
         )
         params = self.convert_2_gemini_param(request)
@@ -137,7 +142,7 @@ class GeminiAdapter(ModelAdapter):
     def parse_response(data: dict) -> tuple:
         completion_tokens = 0
         completion = ''
-        if 'blockReason' in data['promptFeedback']:  # 可选 SAFETY, OTHER
+        if 'promptFeedback' in data and 'blockReason' in data['promptFeedback']:  # 可选 SAFETY, OTHER
             finish_reason = 'content_filter'
         elif data["candidates"][0]['finishReason'] == 'STOP':
             completion = data["candidates"][0]["content"]["parts"][0]["text"]
