@@ -128,30 +128,34 @@ def create_chat_completion(
         return JSONResponse(content=openai_response.model_dump(exclude_none=True), status_code=status_code)
 
 
-@router.get("/verify")
-def admin_token_verify(token=Depends(check_admin_token)):
-    return {"success": True}
+# @router.get("/verify")
+# def admin_token_verify(token=Depends(check_admin_token)):
+#     return {"success": True}
 
+
+# @router.get("/", response_class=HTMLResponse)
+# def home():
+#     html_file = open("./dist/index.html", "r").read()
+#     return html_file
 
 @router.get("/", response_class=HTMLResponse)
 def home():
-    html_file = open("./dist/index.html", "r").read()
-    return html_file
+    return 'ok'
 
 
-@router.get("/getAllModelConfig")
-def get_all_config(token=Depends(check_admin_token)):
-    return JSONResponse(content=get_all_model_config())
+# @router.get("/getAllModelConfig")
+# def get_all_config(token=Depends(check_admin_token)):
+#     return JSONResponse(content=get_all_model_config())
 
 
 class ModelConfigRequest(BaseModel):
     config: str
 
 
-@router.post("/updateModelConfig")
-def update_config(request: List[ModelConfig], token=Depends(check_admin_token)):
-    update_model_config(request)
-    return {"success": True}
+# @router.post("/updateModelConfig")
+# def update_config(request: List[ModelConfig], token=Depends(check_admin_token)):
+#     update_model_config(request)
+#     return {"success": True}
 
 
 def run(port=8090, log_level="info", prefix=""):
