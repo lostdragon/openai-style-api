@@ -15,7 +15,7 @@ class RouterAdapter(ModelAdapter):
             self.round_cnt = 0
 
     def chat_completions(
-        self, request: ChatCompletionRequest
+            self, request: ChatCompletionRequest
     ) -> Iterator[ChatCompletionResponse]:
         token = None
         adapter = None
@@ -26,9 +26,14 @@ class RouterAdapter(ModelAdapter):
             adapter = self.factory_method(token)
 
         elif self.router_strategy == "random":
-            token = random.sample(self.token_pool, 1)
+            token = random.choice(self.token_pool)
             adapter = self.factory_method(token)
         else:
             raise ValueError("Unknown router strategy: {}".format(self.router_strategy))
         logger.info(f"RouterAdapter select:token:{token}, adapter:{adapter}")
         return adapter.chat_completions(request)
+
+    def get_models(self):
+        token = random.choice(self.token_pool)
+        adapter = self.factory_method(token)
+        return adapter.get_models()

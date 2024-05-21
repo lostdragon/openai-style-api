@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.routing import APIRouter
 from pydantic import BaseModel
 from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse, ModelList, ModelCard
 from typing import Iterator, List, Optional
 from adapters.adapter_factory import get_adapter
 from loguru import logger
@@ -88,7 +88,7 @@ def check_admin_token(
 
 def convert(resp: Iterator[ChatCompletionResponse]):
     for response in resp:
-        yield f"data: {response.model_dump_json(exclude_none=True)}\n\n"
+        yield f"data: {response.model_dump_json(exclude_none=False)}\n\n"
     yield "data: [DONE]\n\n"
 
 
@@ -96,6 +96,17 @@ def get_adapter_by_token(token: str):
     model_config = get_model_config(token)
     if model_config is not None:
         return get_adapter(model_config.token)
+
+
+@router.get("/v1/models")
+def get_model_list(model: ModelAdapter = Depends(check_api_key)):
+    model_list = ModelList()
+    # for model_name in model.get_models():
+    #     model_list.data.append(ModelCard(id=model_name))
+    model_list.data.append(ModelCard(id='gpt-4o'))
+    model_list.data.append(ModelCard(id='gpt-4-vision-preview'))
+
+    return JSONResponse(content=model_list.model_dump(exclude_none=True))
 
 
 @router.post("/v1/chat/completions")

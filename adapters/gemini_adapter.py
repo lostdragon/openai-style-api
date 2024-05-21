@@ -1,13 +1,17 @@
+import base64
 import json
+import mimetypes
 import time
 from typing import Dict, Iterator, List
 import uuid
-from adapters.base import ModelAdapter
-from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ErrorResponse
+
+import re
 import requests
+
+from adapters.base import ModelAdapter
+from adapters.protocol import ChatCompletionRequest, ChatCompletionResponse, ErrorResponse, ChatCompletionMessageParam
 from utils.http_util import post, stream
 from loguru import logger
-from utils.util import num_tokens_from_string
 
 """
  curl -x http://127.0.0.1:7890 https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key= \
@@ -98,75 +102,143 @@ error_code_map = {
 
 
 class GeminiAdapter(ModelAdapter):
+    _models = None
+
     def __init__(self, **kwargs):
         super().__init__()
         self.api_key = kwargs.pop("api_key", None)
-        self.prompt = kwargs.pop(
-            "prompt", "You need to follow the system settings:{system}"
-        )
         self.proxies = kwargs.pop("proxies", None)
-        self.model = "gemini-pro"
+        self.model = "gemini-1.5-flash-latest"
         self.config_args = kwargs
+        self.safe_settings = [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_NONE"
+            }
+        ]
 
     def chat_completions(
             self, request: ChatCompletionRequest
     ) -> Iterator[ChatCompletionResponse | ErrorResponse]:
-        method = "generateContent"
+        method = "streamGenerateContent" if request.stream else "generateContent"
         headers = {"Content-Type": "application/json"}
-        # if request.stream:
-        #     method = "streamGenerateContent"
 
-        model = request.model
-        if model not in ['gemini-pro', 'gemini-1.5-pro-latest']:
-            model = 'gemini-pro'
+        if request.model in self.get_models():
+            self.model = request.model
 
+        params = self.convert_2_gemini_params(request)
         url = (
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:{method}?key="
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:{method}?key="
                 + self.api_key
         )
-        params = self.convert_2_gemini_param(request)
-        response = post(url, headers=headers, proxies=self.proxies, params=params)
+
+        if request.stream:
+            url = url + '&alt=sse'
+            response = stream(url, headers=headers, proxies=self.proxies, params=params)
+        else:
+            response = post(url, headers=headers, proxies=self.proxies, params=params)
 
         if response.status_code != 200:
             openai_response = self.error_convert(response.json())
             yield ErrorResponse(status_code=response.status_code, **openai_response)
         else:
-            if request.stream:  # 假的stream
-                openai_response = self.response_convert_stream(response.json())
-                yield ChatCompletionResponse(**openai_response)
+            last_chunk = None
+            if request.stream:
+                message_id = str(uuid.uuid1())
+                for chunk in response.iter_lines(chunk_size=1024):
+                    # 移除头部data: 字符
+                    decoded_line = chunk.decode('utf-8')
+                    logger.debug(f"decoded_line: {decoded_line}")
+                    decoded_line = decoded_line.lstrip("data:").strip()
+                    if "[DONE]" == decoded_line:
+                        break
+                    if decoded_line:
+                        last_chunk = json.loads(decoded_line)
+                        yield ChatCompletionResponse(**self.response_convert_stream(message_id, last_chunk))
+
+                yield ChatCompletionResponse(**self.response_convert_stream(message_id, last_chunk, is_last=True))
             else:
                 openai_response = self.response_convert(response.json())
                 yield ChatCompletionResponse(**openai_response)
+
+    def get_models(self):
+        if self._models is None:
+            self._models = []
+            url = (
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key="
+                    + self.api_key
+            )
+            headers = {"Content-Type": "application/json"}
+            response = requests.get(url, headers=headers, proxies=self.proxies)
+            if response.status_code == 200:
+                result = response.json()
+                for model in result['models']:
+                    matches = re.match('models/(gemini.*)', model['name'])
+                    if matches:
+                        self._models.append(matches.group(1))
+
+        return self._models
 
     @staticmethod
     def parse_response(data: dict) -> tuple:
         completion_tokens = 0
         completion = ''
-        if 'promptFeedback' in data and 'blockReason' in data['promptFeedback']:  # 可选 SAFETY, OTHER
-            finish_reason = 'content_filter'
-        elif data["candidates"][0]['finishReason'] == 'STOP':
-            completion = data["candidates"][0]["content"]["parts"][0]["text"]
-            completion_tokens = num_tokens_from_string(completion)
-            finish_reason = 'stop'
-        elif data["candidates"][0]['finishReason'] == 'MAX_TOKENS':
-            finish_reason = 'length'
-        else:
-            # SAFETY, RECITATION, OTHER
-            finish_reason = 'content_filter'
+        finish_reason = None
+        if data:
+            if 'promptFeedback' in data and 'blockReason' in data['promptFeedback']:  # 可选 SAFETY, OTHER
+                finish_reason = 'content_filter'
+            elif data["candidates"][0]['finishReason'] == 'STOP':
+                completion = data["candidates"][0]["content"]["parts"][0]["text"]
+                finish_reason = 'stop'
+            elif data["candidates"][0]['finishReason'] == 'MAX_TOKENS':
+                finish_reason = 'length'
+            else:
+                # SAFETY, RECITATION, OTHER
+                finish_reason = 'content_filter'
 
         return finish_reason, completion_tokens, completion
 
-    def response_convert_stream(self, data: dict) -> dict:
-        finish_reason, completion_tokens, completion = self.parse_response(data)
+    def response_convert_stream(self, message_id: str, data: dict, is_last: bool = False) -> dict:
+        completion = ''
+        finish_reason = None
+        if data:
+            if 'promptFeedback' in data and 'blockReason' in data['promptFeedback']:  # 可选 SAFETY, OTHER
+                finish_reason = 'content_filter'
+            elif data["candidates"][0]['finishReason'] == 'STOP':
+                completion = data["candidates"][0]["content"]["parts"][0]["text"]
+                finish_reason = 'stop'
+            elif data["candidates"][0]['finishReason'] == 'MAX_TOKENS':
+                finish_reason = 'length'
+            else:
+                # SAFETY, RECITATION, OTHER
+                finish_reason = 'content_filter'
+
+        if not is_last:
+            finish_reason = None
+        else:
+            completion = ''
+
         openai_response = {
-            "id": str(uuid.uuid1()),
+            "id": message_id,
             "object": "chat.completion.chunk",
             "created": int(time.time()),
             "model": self.model,
             "usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": completion_tokens,
-                "total_tokens": completion_tokens,
+                "prompt_tokens": data['usageMetadata']['promptTokenCount'] if data['usageMetadata'] else 0,
+                "completion_tokens": data['usageMetadata']['candidatesTokenCount'] if data['usageMetadata'] else 0,
+                "total_tokens": data['usageMetadata']['totalTokenCount'] if data['usageMetadata'] else 0,
             },
             "choices": [
                 {
@@ -241,54 +313,106 @@ class GeminiAdapter(ModelAdapter):
 
         return self.error_response(code, data['error']['message'])
 
+    @staticmethod
+    def get_image_format(data: bytes) -> str:
+        data = data[:20]
+        if b'GIF' in data:
+            return 'gif'
+        elif b'PNG' in data:
+            return 'png'
+        elif b'JFIF' in data:
+            return 'jpg'
+        return ''
+
+    @classmethod
+    def get_content_type(cls, data: bytes, return_format: bool = False) -> str | tuple:
+        image_format = cls.get_image_format(data)
+        if image_format:
+            mimetype = mimetypes.guess_type('image.{}'.format(image_format))[0]
+        else:
+            mimetype = None
+
+        if return_format:
+            return image_format, mimetype
+        else:
+            return mimetype
+
+    @classmethod
+    def get_image(cls, image_url: str) -> (str, str):
+        """
+        根据图片URL获取图片信息
+        :param image_url: 图片URL
+        :type image_url: str
+        :return:
+        :rtype:
+        """
+        if re.match("^(http|https)://", image_url):
+            content = requests.get(image_url).content
+        else:
+            matches = re.match('data:(.*?);base64,(.*)', image_url)
+            if matches:
+                image_media_type = matches.group(1)
+                image_data = matches.group(2)
+                return image_media_type, image_data
+            else:
+                content = base64.b64decode(image_url)
+        if content:
+            image_media_type = cls.get_content_type(content)
+            if image_media_type:
+                image_data = base64.b64encode(content).decode("utf-8")
+                return image_media_type, image_data
+
+        return None, None
+
     def convert_messages_to_prompt(
-            self, messages: List[ChatMessage]
-    ) -> List[Dict[str, str]]:
-        prompt = []
+            self, messages: List[ChatCompletionMessageParam]
+    ) -> Dict:
+        contents = []
+        system_message = ''
+
         for message in messages:
             role = message.role
             if role in ["function"]:
                 raise Exception(f"不支持的功能:{role}")
-            if role == "system":  # 将system转为user   这里可以使用  CharacterGLM
-                role = "user"
-                content = self.prompt.format(system=message.content)
-                prompt.append({"role": role, "parts": [{"text": content}]})
-                prompt.append({"role": "model", "parts": [{"text": "ok"}]})
+            if role == "system":  # 只支持1.5以上版本
+                system_message = message.content
             elif role == "assistant":
-                prompt.append({"role": "model", "parts": [{"text": message.content}]})
+                contents.append({"role": "model", "parts": [{"text": message.content}]})
             else:
-                content = message.content
-                prompt.append({"role": role, "parts": [{"text": content}]})
-        return prompt
+                parts = []
+                if isinstance(message.content, str):
+                    content = message.content
+                    parts.append({"text": content})
+                else:
+                    parts = []
+                    for c in message.content:
+                        if c.type == 'text':
+                            parts.append({'text': c.text})
+                        elif c.type == 'image_url':
+                            image_media_type, image_data = self.get_image(c.image_url.url)
+                            if image_media_type and image_data:
+                                parts.append({'inlineData': {'mimeType': image_media_type, 'data': image_data}})
 
-    def convert_2_gemini_param(self, request: ChatCompletionRequest):
-        contents = self.convert_messages_to_prompt(request.messages)
-        param = {
-            "contents": contents,
-            # "generationConfig": {
-            #     "temperature": request.temperature if request.temperature else 0.9,  # 0-1之间
-            #     "topK": 1,
-            #     "topP": request.top_p if request.top_p else 1,  # 0-1之间
-            #     "maxOutputTokens": request.max_length if request.max_length else 2048,
-            #     "stopSequences": request.stop if request.stop else [],
-            # },
-            "safetySettings": [
-                {
-                    "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_NONE"
-                }
-            ]
+                contents.append({"role": role, "parts": parts})
+        result = {
+            'contents': contents,
         }
-        return param
+
+        if system_message:
+            result['systemInstruction'] = {"role": "", "parts": [{"text": system_message}]}
+
+        return result
+
+    def convert_2_gemini_params(self, request: ChatCompletionRequest):
+        params = self.convert_messages_to_prompt(request.messages)
+        params.update({
+            "generationConfig": {
+                "temperature": request.temperature if request.temperature else 0.9,  # 0-1之间
+                "topK": 1,
+                "topP": request.top_p if request.top_p else 1,  # 0-1之间
+                "maxOutputTokens": request.max_length if request.max_length else 2048,
+                "stopSequences": request.stop if request.stop else [],
+            },
+            "safetySettings": self.safe_settings
+        })
+        return params

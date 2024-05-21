@@ -9,13 +9,16 @@ class ModelAdapter:
         pass
 
     def chat_completions(
-        self, request: ChatCompletionRequest
+            self, request: ChatCompletionRequest
     ) -> Iterator[ChatCompletionResponse | ErrorResponse]:
         """
         返回一个迭代器对象
          stream为false   第一个就是结果
         """
         pass
+    
+    def get_models(self):
+        return []
 
     def completion_to_openai_response(self, completion: str, model: str = "default"):
         completion_tokens = num_tokens_from_string(completion)
@@ -43,7 +46,7 @@ class ModelAdapter:
         return openai_response
 
     def completion_to_openai_stream_response(
-        self, completion: str, model: str = "default"
+            self, completion: str, model: str = "default"
     ):
         completion_tokens = num_tokens_from_string(completion)
         openai_response = {
