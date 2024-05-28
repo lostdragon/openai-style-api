@@ -236,9 +236,10 @@ class GeminiAdapter(ModelAdapter):
             "created": int(time.time()),
             "model": self.model,
             "usage": {
-                "prompt_tokens": data['usageMetadata']['promptTokenCount'] if data['usageMetadata'] else 0,
-                "completion_tokens": data['usageMetadata']['candidatesTokenCount'] if data['usageMetadata'] else 0,
-                "total_tokens": data['usageMetadata']['totalTokenCount'] if data['usageMetadata'] else 0,
+                "prompt_tokens": data['usageMetadata'].get('promptTokenCount', 0) if data['usageMetadata'] else 0,
+                "completion_tokens": data['usageMetadata'].get('candidatesTokenCount', 0) if data[
+                    'usageMetadata'] else 0,
+                "total_tokens": data['usageMetadata'].get('totalTokenCount', 0) if data['usageMetadata'] else 0,
             },
             "choices": [
                 {
@@ -368,23 +369,17 @@ class GeminiAdapter(ModelAdapter):
             self, messages: List[ChatCompletionMessageParam]
     ) -> Dict:
         contents = []
-        system_message = ''
+        system_parts = []
 
         for message in messages:
             role = message.role
             if role in ["function"]:
                 raise Exception(f"不支持的功能:{role}")
-            if role == "system":  # 只支持1.5以上版本
-                system_message = message.content
-            elif role == "assistant":
-                contents.append({"role": "model", "parts": [{"text": message.content}]})
             else:
                 parts = []
                 if isinstance(message.content, str):
-                    content = message.content
-                    parts.append({"text": content})
+                    parts.append({"text": message.content})
                 else:
-                    parts = []
                     for c in message.content:
                         if c.type == 'text':
                             parts.append({'text': c.text})
@@ -393,13 +388,20 @@ class GeminiAdapter(ModelAdapter):
                             if image_media_type and image_data:
                                 parts.append({'inlineData': {'mimeType': image_media_type, 'data': image_data}})
 
-                contents.append({"role": role, "parts": parts})
+                if parts:
+                    if role == 'system':
+                        system_parts = parts
+                    elif role == 'assistant':
+                        contents.append({"role": "model", "parts": parts})
+                    else:
+                        contents.append({"role": role, "parts": parts})
+
         result = {
             'contents': contents,
         }
 
-        if system_message:
-            result['systemInstruction'] = {"role": "", "parts": [{"text": system_message}]}
+        if system_parts:
+            result['systemInstruction'] = {"role": "", "parts": system_parts}
 
         return result
 
